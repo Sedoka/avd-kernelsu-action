@@ -253,23 +253,19 @@ jobs:
             fi
 
             # Apply KernelSU-side patch if required (ReSukiSU already has native inline hooks)
-            KSU_PATCH="susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+            KSU_PATCH="$(pwd)/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$KSU_PATCH" ]; then
-              for dir in common/drivers/kernelsu common/KernelSU common/KernelSU-Next; do
-                if [ -d "$dir" ] && [ ! -d "$dir/.git" ]; then
-                  dir_real=$(readlink -f "$dir" || echo "$dir")
-                  if [ -f "$dir_real/Kconfig" ] && ! grep -q "KSU_SUSFS" "$dir_real/Kconfig"; then
-                    echo "Applying SuSFS hook patch to $dir..."
-                    (cd "$dir_real" && patch -p1 -N -t < "$(pwd)/$KSU_PATCH") || true
-                  fi
-                  break
-                elif [ -d "$dir" ]; then
-                  if [ -f "$dir/kernel/Kconfig" ] && ! grep -q "KSU_SUSFS" "$dir/kernel/Kconfig"; then
-                    echo "Applying SuSFS hook patch to $dir..."
-                    (cd "$dir" && patch -p1 -N -t < "$(pwd)/$KSU_PATCH") || true
-                  fi
-                  break
+              # Apply from the KernelSU(-Next) ROOT (patch paths are kernel/...), not kernel/ subdir.
+              # Absolute patch path so the subshell cd doesn't break it.
+              for kroot in common/KernelSU-Next common/KernelSU common/SukiSU-Ultra common/drivers/kernelsu; do
+                [ -d "$kroot" ] || continue
+                kroot_real=$(readlink -f "$kroot" 2>/dev/null || echo "$kroot")
+                case "$kroot_real" in */kernel) kroot_real=$(dirname "$kroot_real");; esac
+                if [ -f "$kroot_real/kernel/Kconfig" ] && ! grep -q "KSU_SUSFS" "$kroot_real/kernel/Kconfig"; then
+                  echo "Applying SuSFS hook patch from root: $kroot_real"
+                  (cd "$kroot_real" && patch -p1 -N -t < "$KSU_PATCH") || echo "SuSFS hook patch had rejects (continuing)"
                 fi
+                break
               done
             fi
 
