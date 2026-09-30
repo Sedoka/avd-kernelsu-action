@@ -58,7 +58,7 @@ name: Build AVD KernelSU
         default: ''
         type: string
       susfs_commit:
-        description: 'SuSFS commit to pin (empty = branch tip). SukiSU-Ultra builtin is verified against b213c54 for 6.12'
+        description: 'SuSFS commit to pin (empty = branch tip). SukiSU-Ultra builtin (b20dee7) needs edec89b or older for 6.12: later SuSFS calls hooks builtin lacks'
         required: false
         default: ''
         type: string
