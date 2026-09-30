@@ -295,6 +295,26 @@ jobs:
               fi
             fi
 
+            # x86_64 uses GENERIC_ENTRY: TIF_SECCOMP does not exist there, the seccomp bit
+            # lives in syscall_work (builtin only handles this when clearing, not testing).
+            KSU_DIR=common/drivers/kernelsu
+            if grep -rlq "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR" 2>/dev/null && [ -f "$KSU_DIR/kernel_includes.h" ] && \
+               ! grep -q "define ksu_seccomp_active" "$KSU_DIR/kernel_includes.h"; then
+              echo "Wrapping TIF_SECCOMP tests for GENERIC_ENTRY"
+              grep -rl "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR" | xargs sed -i 's/test_thread_flag(TIF_SECCOMP)/ksu_seccomp_active()/g'
+              perl -0pi -e 's|^(#endif // __KSU_H_KERNEL_INCLUDES)|#ifdef CONFIG_GENERIC_ENTRY\n#define ksu_seccomp_active() test_syscall_work(SECCOMP)\n#else\n#define ksu_seccomp_active() test_thread_flag(TIF_SECCOMP)\n#endif\n\n$1|m' "$KSU_DIR/kernel_includes.h"
+              grep -q "define ksu_seccomp_active" "$KSU_DIR/kernel_includes.h" || { echo "::error::could not define ksu_seccomp_active"; exit 1; }
+            fi
+
+            # Linux >= 6.8: security_add_hooks() takes a struct lsm_id *, not a name. With SuSFS
+            # inline hooks the list is empty, so skip the call ("ksu" stays out of the LSM list).
+            if grep -q 'security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");' "$KSU_DIR/hook/lsm_hook.c" 2>/dev/null && \
+               ! grep -q "struct lsm_id" "$KSU_DIR/hook/lsm_hook.c"; then
+              echo "Adapting security_add_hooks() to struct lsm_id"
+              perl -0pi -e 's/^(\s*)security_add_hooks\(ksu_hooks, ARRAY_SIZE\(ksu_hooks\), "ksu"\);\n#else/#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)\n$1static const struct lsm_id ksu_lsmid = { .name = "ksu", .id = LSM_ID_UNDEF };\n$1if (ARRAY_SIZE(ksu_hooks))\n$1    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), &ksu_lsmid);\n#else\n$1security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#endif\n#else/m' "$KSU_DIR/hook/lsm_hook.c"
+              grep -q "ksu_lsmid" "$KSU_DIR/hook/lsm_hook.c" || { echo "::error::could not adapt lsm_hook.c"; exit 1; }
+            fi
+
             # Apply KernelSU-side patch if required (ReSukiSU already has native inline hooks)
             KSU_PATCH="$(pwd)/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$KSU_PATCH" ]; then
