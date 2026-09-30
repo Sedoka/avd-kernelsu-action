@@ -181,6 +181,16 @@ jobs:
             KSU_TARGET_VER="builtin"
             echo "SuSFS enabled with SukiSU-Ultra: using the native 'builtin' branch"
           fi
+          # KernelSU-Next has no native SuSFS on its own 'dev'; pershoot's fork carries SuSFS
+          # integrated (KSU-side hooks + x86 syscall dispatcher), and its driver version matches
+          # the stock KernelSU-Next manager, unlike SukiSU-Ultra which the x86 KSU-Next manager
+          # only half-recognizes. Route KernelSU-Next + SuSFS to pershoot/KernelSU-Next dev-susfs.
+          if [ "$REPO_SLUG" = "KernelSU-Next/KernelSU-Next" ] && [ "${{ env.ENABLE_SUSFS }}" = "true" ]; then
+            REPO_SLUG="pershoot/KernelSU-Next"
+            REPO_URL="https://github.com/$REPO_SLUG"
+            KSU_TARGET_VER="dev-susfs"
+            echo "SuSFS enabled with KernelSU-Next: using pershoot/KernelSU-Next dev-susfs (native SuSFS)"
+          fi
           # Fail loudly on a nonexistent ref instead of silently falling back to the
           # default branch (which would build an unexpected KernelSU commit).
           # Pure 40-char hex values are treated as commit SHAs and skipped here.
