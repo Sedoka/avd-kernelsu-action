@@ -57,6 +57,11 @@ name: Build AVD KernelSU
         required: false
         default: ''
         type: string
+      susfs_commit:
+        description: 'SuSFS commit to pin (empty = branch tip). SukiSU-Ultra builtin is verified against b213c54 for 6.12'
+        required: false
+        default: ''
+        type: string
       create_release:
         description: 'Publish as GitHub Release'
         required: false
@@ -83,6 +88,7 @@ jobs:
       EXTRA_BAZEL_ARGS: ${{ inputs.extra_bazel_args || '--jobs=4' }}
       ENABLE_SUSFS: ${{ inputs.enable_susfs == true }}
       SUSFS_BRANCH: ${{ inputs.susfs_branch || '' }}
+      SUSFS_COMMIT: ${{ inputs.susfs_commit || '' }}
 
     steps:
       - name: Maximize Build Space
@@ -169,6 +175,12 @@ jobs:
             KSU_TARGET_VER="$DEFAULT_REF"
           fi
           [ -n "$KSU_TARGET_VER" ] || KSU_TARGET_VER="$DEFAULT_REF"
+          # SukiSU-Ultra ships SuSFS natively on its 'builtin' branch (inline hooks, no
+          # 10_enable_susfs_for_ksu patch, no x86 syscall dispatcher); 'main' cannot take SuSFS.
+          if [ "$REPO_SLUG" = "SukiSU-Ultra/SukiSU-Ultra" ] && [ "${{ env.ENABLE_SUSFS }}" = "true" ] && [ "$KSU_TARGET_VER" = "main" ]; then
+            KSU_TARGET_VER="builtin"
+            echo "SuSFS enabled with SukiSU-Ultra: using the native 'builtin' branch"
+          fi
           # Fail loudly on a nonexistent ref instead of silently falling back to the
           # default branch (which would build an unexpected KernelSU commit).
           # Pure 40-char hex values are treated as commit SHAs and skipped here.
@@ -239,7 +251,13 @@ jobs:
               esac
             fi
             echo "SuSFS target branch: $SUSFS_TARGET_BRANCH"
-            git clone --depth=1 -b "$SUSFS_TARGET_BRANCH" "$SUSFS_REPO" susfs4ksu
+            if [ -n "${{ env.SUSFS_COMMIT }}" ]; then
+              git clone -b "$SUSFS_TARGET_BRANCH" "$SUSFS_REPO" susfs4ksu
+              git -C susfs4ksu checkout --detach "${{ env.SUSFS_COMMIT }}"
+            else
+              git clone --depth=1 -b "$SUSFS_TARGET_BRANCH" "$SUSFS_REPO" susfs4ksu
+            fi
+            echo "SuSFS commit: $(git -C susfs4ksu log -1 --format='%h %cs %s')"
 
             # Copy kernel-level susfs files to common/
             cp -r susfs4ksu/kernel_patches/fs/* common/fs/
@@ -249,7 +267,32 @@ jobs:
             PATCH_FILE=$(find susfs4ksu/kernel_patches -name "50_add_susfs_in_*.patch" | head -n 1)
             if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
               echo "Applying SuSFS kernel patch: $PATCH_FILE"
-              (cd common && patch -p1 -N -t < "../$PATCH_FILE") || true
+              # A rejected hunk here means a missing kernel hook: fail now, not at link/boot time.
+              if ! (cd common && patch -p1 -N -t < "../$PATCH_FILE"); then
+                echo "::error::SuSFS kernel patch has rejects:"
+                find common -name "*.rej" -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
+                exit 1
+              fi
+            fi
+
+            # SukiSU-Ultra builtin still declares ksu_su_compat_enabled as a bool, while the
+            # SuSFS kernel hooks use it as a static_key_true (static_branch_likely). The mismatch
+            # links fine but jump_label_init would write key->entries over adjacent data.
+            SUCOMPAT_C=common/drivers/kernelsu/feature/sucompat.c
+            SUCOMPAT_H=common/drivers/kernelsu/feature/sucompat.h
+            if grep -q "^bool ksu_su_compat_enabled" "$SUCOMPAT_C" 2>/dev/null && \
+               grep -q "static_key_true ksu_su_compat_enabled" "$PATCH_FILE"; then
+              echo "Converting ksu_su_compat_enabled to a static key"
+              sed -i 's/^bool ksu_su_compat_enabled __read_mostly = true;/DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled);/' "$SUCOMPAT_C"
+              sed -i 's/\*value = ksu_su_compat_enabled ? 1 : 0;/*value = static_key_enabled(\&ksu_su_compat_enabled) ? 1 : 0;/' "$SUCOMPAT_C"
+              sed -i 's/^\(\s*\)ksu_su_compat_enabled = enable;/\1if (enable)\n\1    static_branch_enable(\&ksu_su_compat_enabled);\n\1else\n\1    static_branch_disable(\&ksu_su_compat_enabled);/' "$SUCOMPAT_C"
+              sed -i 's/if (!ksu_su_compat_enabled)/if (!static_branch_likely(\&ksu_su_compat_enabled))/' "$SUCOMPAT_C"
+              sed -i 's/^extern bool ksu_su_compat_enabled;/#include <linux\/jump_label.h>\nextern struct static_key_true ksu_su_compat_enabled;/' "$SUCOMPAT_H"
+              if grep -qE "(^|[^_&(])ksu_su_compat_enabled *(=|\)|\?)" "$SUCOMPAT_C"; then
+                echo "::error::ksu_su_compat_enabled still used as a bool in $SUCOMPAT_C"
+                grep -n "ksu_su_compat_enabled" "$SUCOMPAT_C"
+                exit 1
+              fi
             fi
 
             # Apply KernelSU-side patch if required (ReSukiSU already has native inline hooks)
