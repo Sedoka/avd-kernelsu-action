@@ -308,12 +308,35 @@ jobs:
             # x86_64 uses GENERIC_ENTRY: TIF_SECCOMP does not exist there, the seccomp bit
             # lives in syscall_work (builtin only handles this when clearing, not testing).
             KSU_DIR=common/drivers/kernelsu
-            if grep -rlq "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR" 2>/dev/null && [ -f "$KSU_DIR/kernel_includes.h" ] && \
-               ! grep -q "define ksu_seccomp_active" "$KSU_DIR/kernel_includes.h"; then
-              echo "Wrapping TIF_SECCOMP tests for GENERIC_ENTRY"
-              grep -rl "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR" | xargs sed -i 's/test_thread_flag(TIF_SECCOMP)/ksu_seccomp_active()/g'
-              perl -0pi -e 's|^(#endif // __KSU_H_KERNEL_INCLUDES)|#ifdef CONFIG_GENERIC_ENTRY\n#define ksu_seccomp_active() test_syscall_work(SECCOMP)\n#else\n#define ksu_seccomp_active() test_thread_flag(TIF_SECCOMP)\n#endif\n\n$1|m' "$KSU_DIR/kernel_includes.h"
-              grep -q "define ksu_seccomp_active" "$KSU_DIR/kernel_includes.h" || { echo "::error::could not define ksu_seccomp_active"; exit 1; }
+            # Per-file, structure-agnostic: works for SukiSU-Ultra (feature/sucompat.c) and
+            # pershoot KernelSU-Next dev-susfs (policy/app_profile.c) alike. Inject an arch-aware
+            # helper at the top of each affected .c and swap the raw TIF_SECCOMP test for it.
+            SECCOMP_FILES=$(grep -rl "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR" 2>/dev/null || true)
+            if [ -n "$SECCOMP_FILES" ]; then
+              echo "Wrapping TIF_SECCOMP tests for GENERIC_ENTRY (x86):"
+              for f in $SECCOMP_FILES; do
+                grep -q "ksu_seccomp_active" "$f" && continue
+                # Swap the call FIRST, then prepend the definition, so the sed does not rewrite
+                # the fallback macro body into a self-referential #define.
+                sed -i 's/test_thread_flag(TIF_SECCOMP)/ksu_seccomp_active()/g' "$f"
+                {
+                  printf '%s\n' \
+                    '#ifndef KSU_SECCOMP_ACTIVE_COMPAT' \
+                    '#define KSU_SECCOMP_ACTIVE_COMPAT' \
+                    '#include <linux/thread_info.h>' \
+                    '#ifdef CONFIG_GENERIC_ENTRY' \
+                    '#define ksu_seccomp_active() test_syscall_work(SECCOMP)' \
+                    '#else' \
+                    '#define ksu_seccomp_active() test_thread_flag(TIF_SECCOMP)' \
+                    '#endif' \
+                    '#endif'
+                  cat "$f"
+                } > "$f.ksutmp" && mv "$f.ksutmp" "$f"
+                echo "  patched $f"
+              done
+              if grep -rq "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR"; then
+                echo "::error::TIF_SECCOMP still present after patch"; exit 1
+              fi
             fi
 
             # Linux >= 6.8: security_add_hooks() takes a struct lsm_id *, not a name. With SuSFS
