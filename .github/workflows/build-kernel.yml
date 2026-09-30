@@ -334,8 +334,10 @@ jobs:
                 } > "$f.ksutmp" && mv "$f.ksutmp" "$f"
                 echo "  patched $f"
               done
-              if grep -rq "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR"; then
-                echo "::error::TIF_SECCOMP still present after patch"; exit 1
+              # A remaining hit is only a problem if it is a bare call, not our fallback
+              # macro body (#define ksu_seccomp_active() test_thread_flag(TIF_SECCOMP)).
+              if grep -rn "test_thread_flag(TIF_SECCOMP)" "$KSU_DIR" | grep -v "define ksu_seccomp_active"; then
+                echo "::error::a bare test_thread_flag(TIF_SECCOMP) call remains after patch"; exit 1
               fi
             fi
 
