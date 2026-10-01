@@ -270,6 +270,19 @@ jobs:
                 echo "$c" >> arch/x86/configs/gki_defconfig
               done
               echo "Appended AVD virtio/goldfish built-ins to gki_defconfig"
+
+              # The vanilla android12-5.10 goldfish_pipe driver WARN_ON()s and aborts probe
+              # (-EINVAL) when the host pipe version read back is < PIPE_CURRENT_DEVICE_VERSION.
+              # Recent emulators (v37) with the Google-patched image kernel pass, but the
+              # vanilla tree aborts -> no /dev/goldfish_pipe -> no GPU -> SurfaceFlinger loops.
+              # The host is compatible (the stock same-version kernel works), so drop the
+              # abort and let probe continue.
+              GP=drivers/platform/goldfish/goldfish_pipe.c
+              if [ -f "$GP" ] && grep -q 'WARN_ON(dev->version < PIPE_CURRENT_DEVICE_VERSION)' "$GP"; then
+                sed -i 's/if (WARN_ON(dev->version < PIPE_CURRENT_DEVICE_VERSION))/if (0 \&\& (dev->version < PIPE_CURRENT_DEVICE_VERSION))/' "$GP"
+                echo "Patched goldfish_pipe version gate in $GP"
+                grep -n 'PIPE_CURRENT_DEVICE_VERSION)' "$GP" | head
+              fi
             fi
           fi
 
