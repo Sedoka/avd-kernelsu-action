@@ -485,10 +485,15 @@ jobs:
               *)                 GKI_CONFIG="common/build.config.gki.x86_64" ;;
             esac
             LTO="${{ env.LTO_MODE }}"; [ "$LTO" = "default" ] && LTO="thin"
+            # HERMETIC_TOOLCHAIN=0: build/link the HOST tools (objtool, fixdep) against
+            # the runner's glibc instead of the prebuilt clang's old bundled sysroot.
+            # Ubuntu's glibc >=2.38 headers redirect strtol -> __isoc23_strtol, symbols
+            # the old sysroot lacks, so a hermetic link fails with "undefined symbol
+            # __isoc23_strtol". The target kernel is freestanding and unaffected.
             echo "=========================================="
-            echo "Pre-Kleaf tree: BUILD_CONFIG=$GKI_CONFIG LTO=$LTO build/build.sh -j$(nproc)"
+            echo "Pre-Kleaf tree: HERMETIC_TOOLCHAIN=0 BUILD_CONFIG=$GKI_CONFIG LTO=$LTO build/build.sh -j$(nproc)"
             echo "=========================================="
-            env DIST_DIR="$DIST_DIR" LTO="$LTO" BUILD_CONFIG="$GKI_CONFIG" \
+            env HERMETIC_TOOLCHAIN=0 DIST_DIR="$DIST_DIR" LTO="$LTO" BUILD_CONFIG="$GKI_CONFIG" \
               build/build.sh -j"$(nproc)" 2>&1 | tee "$BUILD_LOG"
           fi
 
