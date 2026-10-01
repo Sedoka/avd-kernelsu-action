@@ -247,6 +247,30 @@ jobs:
             grep -q "CONFIG_OVERLAY_FS" arch/x86/configs/gki_defconfig || echo "CONFIG_OVERLAY_FS=y" >> arch/x86/configs/gki_defconfig
             grep -q "CONFIG_KPROBES" arch/x86/configs/gki_defconfig || echo "CONFIG_KPROBES=y" >> arch/x86/configs/gki_defconfig
             echo "Appended CONFIG_KSU & CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER to common/arch/x86/configs/gki_defconfig"
+            # Pre-Kleaf (android12-5.10) builds the GKI image alone, WITHOUT the
+            # virtual_device fragment, so none of the emulator's virtio/goldfish drivers
+            # are present and the stock ramdisk .kos cannot be loaded (our config changes
+            # module_layout). Build the drivers the AVD needs to boot straight into the
+            # image as built-ins. (Kleaf trees build these as modules via the dist target,
+            # so only do this on the legacy path.)
+            if [ ! -e tools/bazel ]; then
+              echo "=== Pre-Kleaf: building AVD virtio/goldfish drivers built-in ==="
+              for c in \
+                CONFIG_VIRTIO=y CONFIG_VIRTIO_PCI=y CONFIG_VIRTIO_PCI_LEGACY=y \
+                CONFIG_VIRTIO_MMIO=y CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y \
+                CONFIG_VIRTIO_BLK=y CONFIG_VIRTIO_NET=y CONFIG_VIRTIO_CONSOLE=y \
+                CONFIG_VIRTIO_INPUT=y CONFIG_VIRTIO_BALLOON=y CONFIG_VIRTIO_PMEM=y \
+                CONFIG_HW_RANDOM_VIRTIO=y CONFIG_VSOCKETS=y CONFIG_VIRTIO_VSOCKETS=y \
+                CONFIG_NET_9P=y CONFIG_NET_9P_VIRTIO=y CONFIG_9P_FS=y \
+                CONFIG_GOLDFISH=y CONFIG_GOLDFISH_PIPE=y \
+                CONFIG_GOLDFISH_TTY=y CONFIG_RTC_DRV_GOLDFISH=y CONFIG_GOLDFISH_SYNC=y \
+                CONFIG_TTY_PRINTK=y; do
+                key="${c%%=*}"
+                sed -i "/^${key}=/d;/^# ${key} is not set/d" arch/x86/configs/gki_defconfig
+                echo "$c" >> arch/x86/configs/gki_defconfig
+              done
+              echo "Appended AVD virtio/goldfish built-ins to gki_defconfig"
+            fi
           fi
 
           # Ensure ccflags is set in KernelSU Kbuild & Makefile for x86_64 dynamic dispatcher
