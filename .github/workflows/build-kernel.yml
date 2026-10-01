@@ -136,7 +136,13 @@ jobs:
           mkdir -p android-kernel
           cd android-kernel
           echo "Initializing repo for branch: ${{ env.KERNEL_MANIFEST_BRANCH }}"
-          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b "${{ env.KERNEL_MANIFEST_BRANCH }}"
+          # --use-superproject: pin every project to the exact SHA recorded in
+          # kernel/superproject. Older dated manifests reference kernel/common by a
+          # branch name (e.g. android12-5.10-2021-12) that AOSP later moved under
+          # deprecated/, so a plain branch-ref sync fails ("couldn't find remote ref").
+          # The superproject records SHAs, which are fetched directly via sha1-in-want
+          # and sidestep the moved branches.
+          repo init --depth=1 --use-superproject -u https://android.googlesource.com/kernel/manifest -b "${{ env.KERNEL_MANIFEST_BRANCH }}"
           echo "Syncing repository..."
           repo sync -c -j12 --no-tags --no-clone-bundle
 
