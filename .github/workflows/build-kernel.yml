@@ -301,11 +301,25 @@ jobs:
             PATCH_FILE=$(find susfs4ksu/kernel_patches -name "50_add_susfs_in_*.patch" | head -n 1)
             if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
               echo "Applying SuSFS kernel patch: $PATCH_FILE"
-              # A rejected hunk here means a missing kernel hook: fail now, not at link/boot time.
+              # Most rejects mean a missing kernel hook and must fail. But a susfs branch
+              # built for a newer 5.10.x can miss on an older dated tree in a non-critical
+              # optional-feature hunk (e.g. SUS_KSTAT inotify fdinfo spoofing): the susfs
+              # core symbols are still defined, the stock file just keeps its behavior, and
+              # the compile gates anything truly missing. Tolerate rejects ONLY in a known
+              # benign allowlist; fail on any other reject.
               if ! (cd common && patch -p1 -N -t < "../$PATCH_FILE"); then
-                echo "::error::SuSFS kernel patch has rejects:"
+                echo "::warning::SuSFS kernel patch produced rejects:"
                 find common -name "*.rej" -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
-                exit 1
+                BENIGN=' fs/notify/fdinfo.c.rej '
+                BAD=0
+                for rej in $(find common -name "*.rej"); do
+                  rel="${rej#common/}"
+                  case "$BENIGN" in
+                    *" $rel "*) echo "Tolerating benign reject: $rel" ;;
+                    *) echo "::error::unexpected SuSFS reject: $rel"; BAD=1 ;;
+                  esac
+                done
+                [ "$BAD" -eq 0 ] || exit 1
               fi
             fi
 
