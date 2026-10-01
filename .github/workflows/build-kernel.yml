@@ -283,6 +283,14 @@ jobs:
                 echo "=== Grafting modern goldfish drivers built-in ==="
                 mkdir -p include/uapi/goldfish
                 cp "$VD"/uapi/goldfish/*.h include/uapi/goldfish/ 2>/dev/null || true
+                # headers_install validates uapi SPDX tags: they must carry
+                # "WITH Linux-syscall-note". The vd headers omit it (they weren't exported
+                # via headers_install there), so add it where missing.
+                for h in include/uapi/goldfish/*.h; do
+                  [ -f "$h" ] || continue
+                  grep -q 'Linux-syscall-note' "$h" || \
+                    sed -i 's#\(SPDX-License-Identifier: [A-Za-z0-9.+-]\+\)#\1 WITH Linux-syscall-note#' "$h"
+                done
                 rm -f "$GDST"/goldfish_pipe.c
                 cp "$VD"/goldfish_drivers/goldfish_pipe_base.c \
                    "$VD"/goldfish_drivers/goldfish_pipe_v1.c \
