@@ -323,6 +323,18 @@ jobs:
               fi
             fi
 
+            # Old 5.10 trees (e.g. the 2021-12 dated tree) lack Android's VMA padding
+            # feature, so susfs' task_mmu spoofing fails to build with
+            # "implicit declaration of function 'VMA_PAD_START'". On a kernel without
+            # padding, the pad boundary is just vm_end, so provide that no-op fallback.
+            if ! grep -rqs 'define VMA_PAD_START' common/include/linux/; then
+              echo "Injecting VMA_PAD_START fallback (no VMA padding on this tree)"
+              printf '\n%s\n' \
+                '#ifndef VMA_PAD_START' \
+                '#define VMA_PAD_START(vma) ((vma)->vm_end)' \
+                '#endif' >> common/include/linux/mm.h
+            fi
+
             # SukiSU-Ultra builtin still declares ksu_su_compat_enabled as a bool, while the
             # SuSFS kernel hooks use it as a static_key_true (static_branch_likely). The mismatch
             # links fine but jump_label_init would write key->entries over adjacent data.
