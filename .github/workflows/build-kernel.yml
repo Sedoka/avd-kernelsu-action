@@ -295,6 +295,10 @@ jobs:
                 # copy every driver source + header (goldfish_pipe_base.c also needs the
                 # local defconfig_test.h, etc.)
                 cp "$VD"/goldfish_drivers/*.c "$VD"/goldfish_drivers/*.h "$GDST"/
+                # defconfig_test.h is a build-time self-check that asserts the AVD drivers
+                # are MODULES (=m, as the fragment declares). We build them built-in on
+                # purpose, so neutralise the assertions.
+                echo '/* graft: config self-test disabled (drivers built-in) */' > "$GDST"/defconfig_test.h
                 printf '%s\n' \
                   '# Grafted modern goldfish drivers (from common-modules/virtual-device), built-in.' \
                   'goldfish_pipe-objs := goldfish_pipe_base.o goldfish_pipe_v1.o goldfish_pipe_v2.o' \
