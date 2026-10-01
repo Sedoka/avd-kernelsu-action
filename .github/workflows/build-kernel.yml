@@ -455,26 +455,42 @@ jobs:
         working-directory: android-kernel
         run: |
           set -eo pipefail
-          BAZEL_FLAGS=""
-          if [ "${{ env.USE_FAST_CONFIG }}" = "true" ]; then
-            BAZEL_FLAGS="--config=fast"
-          fi
-
-          if [ "${{ env.LTO_MODE }}" != "default" ]; then
-            BAZEL_FLAGS="${BAZEL_FLAGS} --lto=${{ env.LTO_MODE }}"
-          fi
-
-          BAZEL_FLAGS="${BAZEL_FLAGS} --config=stamp --curses=no --show_progress_rate_limit=5 ${{ env.EXTRA_BAZEL_ARGS }}"
-
           DIST_DIR="$PWD/out/dist"
           BUILD_LOG="$PWD/out/bazel-build.log"
           mkdir -p "$DIST_DIR" "$PWD/out"
-          echo "=========================================="
-          echo "Running Bazel Build:"
-          echo "tools/bazel run ${BAZEL_FLAGS} ${{ env.BUILD_TARGET }} -- --destdir $DIST_DIR"
-          echo "=========================================="
 
-          tools/bazel run ${BAZEL_FLAGS} "${{ env.BUILD_TARGET }}" -- --destdir "$DIST_DIR" 2>&1 | tee "$BUILD_LOG"
+          if [ -e tools/bazel ]; then
+            # Kleaf/Bazel tree (android13+/6.x).
+            BAZEL_FLAGS=""
+            if [ "${{ env.USE_FAST_CONFIG }}" = "true" ]; then
+              BAZEL_FLAGS="--config=fast"
+            fi
+            if [ "${{ env.LTO_MODE }}" != "default" ]; then
+              BAZEL_FLAGS="${BAZEL_FLAGS} --lto=${{ env.LTO_MODE }}"
+            fi
+            BAZEL_FLAGS="${BAZEL_FLAGS} --config=stamp --curses=no --show_progress_rate_limit=5 ${{ env.EXTRA_BAZEL_ARGS }}"
+            echo "=========================================="
+            echo "Running Bazel Build: tools/bazel run ${BAZEL_FLAGS} ${{ env.BUILD_TARGET }} -- --destdir $DIST_DIR"
+            echo "=========================================="
+            tools/bazel run ${BAZEL_FLAGS} "${{ env.BUILD_TARGET }}" -- --destdir "$DIST_DIR" 2>&1 | tee "$BUILD_LOG"
+          else
+            # Pre-Kleaf tree (e.g. android12-5.10): legacy build/build.sh. The GKI
+            # build.config builds the kernel image (bzImage); the virtual_device config
+            # only builds .kos (FILES="", MAKE_GOALS="modules") so it yields no image.
+            # CONFIG_KSU was injected into arch/x86/configs/gki_defconfig, which the GKI
+            # build.config uses, so the legacy GKI build is KSU-enabled. Goldfish/virtio
+            # modules come from the AVD ramdisk (same 5.10.x KMI generation).
+            case "${{ env.BUILD_TARGET }}" in
+              *aarch64*|*arm64*) GKI_CONFIG="common/build.config.gki.aarch64" ;;
+              *)                 GKI_CONFIG="common/build.config.gki.x86_64" ;;
+            esac
+            LTO="${{ env.LTO_MODE }}"; [ "$LTO" = "default" ] && LTO="thin"
+            echo "=========================================="
+            echo "Pre-Kleaf tree: BUILD_CONFIG=$GKI_CONFIG LTO=$LTO build/build.sh -j$(nproc)"
+            echo "=========================================="
+            env DIST_DIR="$DIST_DIR" LTO="$LTO" BUILD_CONFIG="$GKI_CONFIG" \
+              build/build.sh -j"$(nproc)" 2>&1 | tee "$BUILD_LOG"
+          fi
 
           # Report the KernelSU driver version and the manager APK signature the kernel
           # expects, so the matching manager APK can be selected and verified.
