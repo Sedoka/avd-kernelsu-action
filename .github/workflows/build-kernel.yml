@@ -135,14 +135,29 @@ jobs:
         run: |
           mkdir -p android-kernel
           cd android-kernel
-          echo "Initializing repo for branch: ${{ env.KERNEL_MANIFEST_BRANCH }}"
-          # --use-superproject: pin every project to the exact SHA recorded in
-          # kernel/superproject. Older dated manifests reference kernel/common by a
-          # branch name (e.g. android12-5.10-2021-12) that AOSP later moved under
-          # deprecated/, so a plain branch-ref sync fails ("couldn't find remote ref").
-          # The superproject records SHAs, which are fetched directly via sha1-in-want
-          # and sidestep the moved branches.
-          repo init --depth=1 --use-superproject -u https://android.googlesource.com/kernel/manifest -b "${{ env.KERNEL_MANIFEST_BRANCH }}"
+          BRANCH="${{ env.KERNEL_MANIFEST_BRANCH }}"
+          echo "Initializing repo for branch: $BRANCH"
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b "$BRANCH"
+          # Older dated manifests pin kernel/common to a branch (e.g.
+          # android12-5.10-2021-12) that AOSP later moved under deprecated/, so the
+          # manifest's branch-ref sync fails ("couldn't find remote ref"). If that is
+          # the case, remap kernel/common to the deprecated/ ref via a local manifest.
+          # (No-op for recent branches that are still live, e.g. the android16 path.)
+          KBRANCH="${BRANCH#common-}"
+          CGIT="https://android.googlesource.com/kernel/common"
+          if ! git ls-remote --heads "$CGIT" "$KBRANCH" | grep -q .; then
+            if git ls-remote --heads "$CGIT" "deprecated/$KBRANCH" | grep -q .; then
+              echo "kernel/common branch '$KBRANCH' moved under deprecated/; remapping."
+              mkdir -p .repo/local_manifests
+              printf '%s\n' \
+                '<?xml version="1.0" encoding="UTF-8"?>' \
+                '<manifest>' \
+                '  <remove-project name="kernel/common" />' \
+                "  <project path=\"common\" name=\"kernel/common\" revision=\"refs/heads/deprecated/$KBRANCH\" dest-branch=\"deprecated/$KBRANCH\" />" \
+                '</manifest>' > .repo/local_manifests/deprecated-common.xml
+              cat .repo/local_manifests/deprecated-common.xml
+            fi
+          fi
           echo "Syncing repository..."
           repo sync -c -j12 --no-tags --no-clone-bundle
 
