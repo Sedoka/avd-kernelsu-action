@@ -374,7 +374,7 @@ jobs:
                     '#ifndef KSU_SECCOMP_ACTIVE_COMPAT' \
                     '#define KSU_SECCOMP_ACTIVE_COMPAT' \
                     '#include <linux/thread_info.h>' \
-                    '#ifdef CONFIG_GENERIC_ENTRY' \
+                    '#if defined(CONFIG_GENERIC_ENTRY) && defined(SYSCALL_WORK_SECCOMP)' \
                     '#define ksu_seccomp_active() test_syscall_work(SECCOMP)' \
                     '#else' \
                     '#define ksu_seccomp_active() test_thread_flag(TIF_SECCOMP)' \
