@@ -254,7 +254,7 @@ jobs:
             # image as built-ins. (Kleaf trees build these as modules via the dist target,
             # so only do this on the legacy path.)
             if [ ! -e tools/bazel ]; then
-              echo "=== Pre-Kleaf: building AVD virtio/goldfish drivers built-in ==="
+              echo "=== Pre-Kleaf: forcing AVD virtio/goldfish support built-in ==="
               for c in \
                 CONFIG_VIRTIO=y CONFIG_VIRTIO_PCI=y CONFIG_VIRTIO_PCI_LEGACY=y \
                 CONFIG_VIRTIO_MMIO=y CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y \
@@ -262,8 +262,8 @@ jobs:
                 CONFIG_VIRTIO_INPUT=y CONFIG_VIRTIO_BALLOON=y CONFIG_VIRTIO_PMEM=y \
                 CONFIG_HW_RANDOM_VIRTIO=y CONFIG_VSOCKETS=y CONFIG_VIRTIO_VSOCKETS=y \
                 CONFIG_NET_9P=y CONFIG_NET_9P_VIRTIO=y CONFIG_9P_FS=y \
-                CONFIG_GOLDFISH=y CONFIG_GOLDFISH_PIPE=y \
-                CONFIG_GOLDFISH_TTY=y CONFIG_RTC_DRV_GOLDFISH=y CONFIG_GOLDFISH_SYNC=y \
+                CONFIG_GOLDFISH=y CONFIG_GOLDFISH_TTY=y CONFIG_RTC_DRV_GOLDFISH=y \
+                CONFIG_SYNC_FILE=y CONFIG_DMA_SHARED_BUFFER=y CONFIG_PCI=y \
                 CONFIG_TTY_PRINTK=y; do
                 key="${c%%=*}"
                 sed -i "/^${key}=/d;/^# ${key} is not set/d" arch/x86/configs/gki_defconfig
@@ -271,17 +271,38 @@ jobs:
               done
               echo "Appended AVD virtio/goldfish built-ins to gki_defconfig"
 
-              # The vanilla android12-5.10 goldfish_pipe driver WARN_ON()s and aborts probe
-              # (-EINVAL) when the host pipe version read back is < PIPE_CURRENT_DEVICE_VERSION.
-              # Recent emulators (v37) with the Google-patched image kernel pass, but the
-              # vanilla tree aborts -> no /dev/goldfish_pipe -> no GPU -> SurfaceFlinger loops.
-              # The host is compatible (the stock same-version kernel works), so drop the
-              # abort and let probe continue.
-              GP=drivers/platform/goldfish/goldfish_pipe.c
-              if [ -f "$GP" ] && grep -q 'WARN_ON(dev->version < PIPE_CURRENT_DEVICE_VERSION)' "$GP"; then
-                sed -i 's/if (WARN_ON(dev->version < PIPE_CURRENT_DEVICE_VERSION))/if (0 \&\& (dev->version < PIPE_CURRENT_DEVICE_VERSION))/' "$GP"
-                echo "Patched goldfish_pipe version gate in $GP"
-                grep -n 'PIPE_CURRENT_DEVICE_VERSION)' "$GP" | head
+              # common's in-tree goldfish_pipe.c is the OLD single-file pipe, whose host
+              # version handshake fails on emulator v37 (no GPU). The MODERN pipe (v2) plus
+              # goldfish_address_space and goldfish_sync (required by gfxstream's host GL
+              # connection) live in common-modules/virtual-device/goldfish_drivers as
+              # external modules. Graft them into the tree as BUILT-IN so the image drives
+              # the emulator GPU with no loadable modules.
+              VD=../common-modules/virtual-device
+              GDST=drivers/platform/goldfish
+              if [ -d "$VD/goldfish_drivers" ]; then
+                echo "=== Grafting modern goldfish drivers built-in ==="
+                mkdir -p include/uapi/goldfish
+                cp "$VD"/uapi/goldfish/*.h include/uapi/goldfish/ 2>/dev/null || true
+                rm -f "$GDST"/goldfish_pipe.c
+                cp "$VD"/goldfish_drivers/goldfish_pipe_base.c \
+                   "$VD"/goldfish_drivers/goldfish_pipe_v1.c \
+                   "$VD"/goldfish_drivers/goldfish_pipe_v2.c \
+                   "$VD"/goldfish_drivers/goldfish_sync.c \
+                   "$VD"/goldfish_drivers/goldfish_address_space.c \
+                   "$VD"/goldfish_drivers/goldfish_battery.c \
+                   "$VD"/goldfish_drivers/goldfish_pipe.h \
+                   "$VD"/goldfish_drivers/goldfish_pipe_qemu.h \
+                   "$GDST"/
+                printf '%s\n' \
+                  '# Grafted modern goldfish drivers (from common-modules/virtual-device), built-in.' \
+                  'goldfish_pipe-objs := goldfish_pipe_base.o goldfish_pipe_v1.o goldfish_pipe_v2.o' \
+                  'obj-y += goldfish_pipe.o' \
+                  'obj-y += goldfish_sync.o' \
+                  'obj-y += goldfish_address_space.o' \
+                  'obj-y += goldfish_battery.o' > "$GDST"/Makefile
+                echo "Grafted goldfish drivers into $GDST:"; ls "$GDST"
+              else
+                echo "::warning::$VD/goldfish_drivers not found; GPU drivers not grafted"
               fi
             fi
           fi
@@ -537,24 +558,21 @@ jobs:
             echo "=========================================="
             tools/bazel run ${BAZEL_FLAGS} "${{ env.BUILD_TARGET }}" -- --destdir "$DIST_DIR" 2>&1 | tee "$BUILD_LOG"
           else
-            # Pre-Kleaf tree (e.g. android12-5.10): legacy build/build.sh. The GKI
-            # build.config builds the kernel image (bzImage); the virtual_device config
-            # only builds .kos (FILES="", MAKE_GOALS="modules") so it yields no image.
-            # CONFIG_KSU was injected into arch/x86/configs/gki_defconfig, which the GKI
-            # build.config uses, so the legacy GKI build is KSU-enabled. Goldfish/virtio
-            # modules come from the AVD ramdisk (same 5.10.x KMI generation).
+            # Pre-Kleaf tree (e.g. android12-5.10): legacy build/build.sh with the GKI
+            # image config. The emulator's modern goldfish drivers (pipe v2 +
+            # address_space + sync) and virtio are grafted/forced BUILT-IN in the
+            # Integrate step, so the image boots the emulator with no loadable modules
+            # (our KSU/SuSFS config changes module_layout, so stock ramdisk .kos won't
+            # load, and gfxstream needs goldfish_address_space present at boot).
             case "${{ env.BUILD_TARGET }}" in
               *aarch64*|*arm64*) GKI_CONFIG="common/build.config.gki.aarch64" ;;
               *)                 GKI_CONFIG="common/build.config.gki.x86_64" ;;
             esac
             LTO="${{ env.LTO_MODE }}"; [ "$LTO" = "default" ] && LTO="thin"
-            # HERMETIC_TOOLCHAIN=0: build/link the HOST tools (objtool, fixdep) against
-            # the runner's glibc instead of the prebuilt clang's old bundled sysroot.
-            # Ubuntu's glibc >=2.38 headers redirect strtol -> __isoc23_strtol, symbols
-            # the old sysroot lacks, so a hermetic link fails with "undefined symbol
-            # __isoc23_strtol". The target kernel is freestanding and unaffected.
+            # HERMETIC_TOOLCHAIN=0: build/link HOST tools against the runner glibc, not the
+            # prebuilt clang's old sysroot (else objtool fails: undefined __isoc23_strtol).
             echo "=========================================="
-            echo "Pre-Kleaf tree: HERMETIC_TOOLCHAIN=0 BUILD_CONFIG=$GKI_CONFIG LTO=$LTO build/build.sh -j$(nproc)"
+            echo "Pre-Kleaf: HERMETIC_TOOLCHAIN=0 BUILD_CONFIG=$GKI_CONFIG LTO=$LTO build/build.sh -j$(nproc)"
             echo "=========================================="
             env HERMETIC_TOOLCHAIN=0 DIST_DIR="$DIST_DIR" LTO="$LTO" BUILD_CONFIG="$GKI_CONFIG" \
               build/build.sh -j"$(nproc)" 2>&1 | tee "$BUILD_LOG"
