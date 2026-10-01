@@ -145,8 +145,11 @@ jobs:
           # (No-op for recent branches that are still live, e.g. the android16 path.)
           KBRANCH="${BRANCH#common-}"
           CGIT="https://android.googlesource.com/kernel/common"
-          if ! git ls-remote --heads "$CGIT" "$KBRANCH" | grep -q .; then
-            if git ls-remote --heads "$CGIT" "deprecated/$KBRANCH" | grep -q .; then
+          # NB: `git ls-remote <pat>` tail-matches, so "$KBRANCH" alone also matches
+          # refs/heads/deprecated/$KBRANCH. Match the FULL ref exactly instead.
+          CREFS="$(git ls-remote --heads "$CGIT")"
+          if ! printf '%s\n' "$CREFS" | grep -qE "[[:space:]]refs/heads/${KBRANCH}$"; then
+            if printf '%s\n' "$CREFS" | grep -qE "[[:space:]]refs/heads/deprecated/${KBRANCH}$"; then
               echo "kernel/common branch '$KBRANCH' moved under deprecated/; remapping."
               mkdir -p .repo/local_manifests
               printf '%s\n' \
