@@ -292,15 +292,9 @@ jobs:
                     sed -i 's#\(SPDX-License-Identifier: [A-Za-z0-9.+-]\+\)#\1 WITH Linux-syscall-note#' "$h"
                 done
                 rm -f "$GDST"/goldfish_pipe.c
-                cp "$VD"/goldfish_drivers/goldfish_pipe_base.c \
-                   "$VD"/goldfish_drivers/goldfish_pipe_v1.c \
-                   "$VD"/goldfish_drivers/goldfish_pipe_v2.c \
-                   "$VD"/goldfish_drivers/goldfish_sync.c \
-                   "$VD"/goldfish_drivers/goldfish_address_space.c \
-                   "$VD"/goldfish_drivers/goldfish_battery.c \
-                   "$VD"/goldfish_drivers/goldfish_pipe.h \
-                   "$VD"/goldfish_drivers/goldfish_pipe_qemu.h \
-                   "$GDST"/
+                # copy every driver source + header (goldfish_pipe_base.c also needs the
+                # local defconfig_test.h, etc.)
+                cp "$VD"/goldfish_drivers/*.c "$VD"/goldfish_drivers/*.h "$GDST"/
                 printf '%s\n' \
                   '# Grafted modern goldfish drivers (from common-modules/virtual-device), built-in.' \
                   'goldfish_pipe-objs := goldfish_pipe_base.o goldfish_pipe_v1.o goldfish_pipe_v2.o' \
